@@ -1,0 +1,76 @@
+name: checker
+
+# Elke run blijft ~50 minuten draaien en controleert elke minuut.
+# Het schema start elke 15 minuten een nieuwe run; dankzij "concurrency" staat
+# er altijd één klaar die begint zodra de vorige stopt. Zo wordt er (vrijwel)
+# onafgebroken elke minuut gecontroleerd, ook als GitHub het schema wat later start.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Stuur een testmelding naar je telefoon"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: checker
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Git instellen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Testmelding sturen
+        if: ${{ inputs.test }}
+        run: python check.py --test-notify
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SOURCE_URL: ${{ secrets.SOURCE_URL }}
+
+      - name: Controleren (~50 min)
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SOURCE_URL: ${{ secrets.SOURCE_URL }}
+        run: |
+          end=$(( SECONDS + 50 * 60 ))
+          failed=0
+          while [ $SECONDS -lt $end ]; do
+            python check.py || failed=$(( failed + 1 ))
+            # Nieuwe meldingen meteen opslaan, zodat je nooit een dubbele melding krijgt
+            if [ -f state.json ] && [ -n "$(git status --porcelain state.json)" ]; then
+              git add state.json
+              git commit -q -m "update"
+              git push -q || (git pull -q --rebase && git push -q)
+            fi
+            sleep 60
+          done
+          # Rood kruisje in Actions als een melding mislukte, zodat je het merkt
+          if [ $failed -gt 3 ]; then echo "$failed controles of meldingen mislukt"; exit 1; fi
+
+      - name: Keepalive
+        run: |
+          # GitHub zet schema's uit na 60 dagen zonder activiteit; dit houdt hem actief
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt $(( 50 * 86400 )) ]; then
+            git commit --allow-empty -q -m "update"
+            git push -q
+          fi
