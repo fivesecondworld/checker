@@ -42,7 +42,7 @@ def load_config() -> dict:
     cfg = dict(DEFAULTS)
     if CONFIG_FILE.exists():
         cfg.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
-    for key in ("source_url", "ntfy_topic"):
+    for key in ("source_url", "ntfy_topic", "ntfy_token"):
         if os.environ.get(key.upper()):
             cfg[key] = os.environ[key.upper()]
     if not cfg.get("source_url"):
@@ -118,22 +118,26 @@ def describe(x: dict) -> str:
 
 def notify(cfg: dict, x: dict) -> bool:
     """Stuurt één melding per woning. Geeft True terug als ntfy hem heeft aangenomen.
-    De details gaan alleen naar ntfy; de openbare log toont alleen aantallen."""
+    De details gaan alleen naar ntfy; de openbare log toont alleen aantallen/statuscodes."""
     if not cfg.get("ntfy_topic"):
         print("Geen NTFY_TOPIC ingesteld; melding niet verstuurd.")
         return False
-    title = f"🏠 Nieuwe woning in {x['city']}: €{x['price']:.0f}"
-    for attempt in range(3):
+    headers = {"Title": f"🏠 Nieuwe woning in {x['city']}: €{x['price']:.0f}".encode("utf-8"),
+               "Tags": "house", "Priority": "urgent", "Click": x["url"]}
+    if cfg.get("ntfy_token"):
+        # Met een (gratis) ntfy-account gelden de limieten per account i.p.v. per IP-adres
+        headers["Authorization"] = f"Bearer {cfg['ntfy_token']}"
+    body = f"{describe(x)}\n{x['url']}".encode("utf-8")
+    for attempt, wait in enumerate((2, 5, 10, 20), start=1):
         try:
-            requests.post(f"https://ntfy.sh/{cfg['ntfy_topic']}",
-                          data=f"{describe(x)}\n{x['url']}".encode("utf-8"),
-                          headers={"Title": title.encode("utf-8"), "Tags": "house",
-                                   "Priority": "urgent", "Click": x["url"]},
-                          timeout=15).raise_for_status()
-            return True
+            r = requests.post(f"https://ntfy.sh/{cfg['ntfy_topic']}", data=body,
+                              headers=headers, timeout=15)
+            if r.ok:
+                return True
+            print(f"Melding mislukt (poging {attempt}): HTTP {r.status_code}")
         except Exception as e:
-            print(f"Melding mislukt (poging {attempt + 1}): {type(e).__name__}")
-            time.sleep(5)
+            print(f"Melding mislukt (poging {attempt}): {type(e).__name__}")
+        time.sleep(wait)
     return False
 
 

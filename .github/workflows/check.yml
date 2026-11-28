@@ -1,9 +1,10 @@
 name: checker
 
-# Elke run blijft ~50 minuten draaien en controleert elke minuut.
+# Elke run blijft ~50 minuten draaien. Tussen 07:00 en 18:00 (Nederlandse tijd)
+# wordt elke 30 seconden gecontroleerd, daarbuiten elke 5 minuten.
 # Het schema start elke 15 minuten een nieuwe run; dankzij "concurrency" staat
 # er altijd één klaar die begint zodra de vorige stopt. Zo wordt er (vrijwel)
-# onafgebroken elke minuut gecontroleerd, ook als GitHub het schema wat later start.
+# onafgebroken gecontroleerd, ook als GitHub het schema wat later start.
 
 on:
   schedule:
@@ -45,11 +46,13 @@ jobs:
         run: python check.py --test-notify
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
 
-      - name: Controleren (~50 min)
+      - name: Controleren (~50 min; overdag elke 30 s, 's nachts elke 5 min)
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
         run: |
           end=$(( SECONDS + 50 * 60 ))
@@ -62,7 +65,8 @@ jobs:
               git commit -q -m "update"
               git push -q || (git pull -q --rebase && git push -q)
             fi
-            sleep 60
+            hour=$(TZ=Europe/Amsterdam date +%-H)
+            if [ "$hour" -ge 7 ] && [ "$hour" -lt 18 ]; then sleep 30; else sleep 300; fi
           done
           # Rood kruisje in Actions als een melding mislukte, zodat je het merkt
           if [ $failed -gt 3 ]; then echo "$failed controles of meldingen mislukt"; exit 1; fi
