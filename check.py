@@ -116,18 +116,7 @@ def describe(x: dict) -> str:
     return f"{x['title']}, {x['city']} – " + " · ".join(bits)
 
 
-def notify(cfg: dict, x: dict) -> bool:
-    """Stuurt één melding per woning. Geeft True terug als ntfy hem heeft aangenomen.
-    De details gaan alleen naar ntfy; de openbare log toont alleen aantallen/statuscodes."""
-    if not cfg.get("ntfy_topic"):
-        print("Geen NTFY_TOPIC ingesteld; melding niet verstuurd.")
-        return False
-    headers = {"Title": f"🏠 Nieuwe woning in {x['city']}: €{x['price']:.0f}".encode("utf-8"),
-               "Tags": "house", "Priority": "urgent", "Click": x["url"]}
-    if cfg.get("ntfy_token"):
-        # Met een (gratis) ntfy-account gelden de limieten per account i.p.v. per IP-adres
-        headers["Authorization"] = f"Bearer {cfg['ntfy_token']}"
-    body = f"{describe(x)}\n{x['url']}".encode("utf-8")
+def _post(cfg: dict, headers: dict, body: bytes) -> bool:
     for attempt, wait in enumerate((2, 5, 10, 20), start=1):
         try:
             r = requests.post(f"https://ntfy.sh/{cfg['ntfy_topic']}", data=body,
@@ -139,6 +128,26 @@ def notify(cfg: dict, x: dict) -> bool:
             print(f"Melding mislukt (poging {attempt}): {type(e).__name__}")
         time.sleep(wait)
     return False
+
+
+def notify(cfg: dict, x: dict) -> bool:
+    """Stuurt per woning twee meldingen: één direct en een herinnering 2 minuten later.
+    Geeft True terug als ntfy minstens één ervan heeft aangenomen.
+    De details gaan alleen naar ntfy; de openbare log toont alleen aantallen/statuscodes."""
+    if not cfg.get("ntfy_topic"):
+        print("Geen NTFY_TOPIC ingesteld; melding niet verstuurd.")
+        return False
+    base = {"Tags": "house", "Priority": "urgent", "Click": x["url"]}
+    if cfg.get("ntfy_token"):
+        # Met een (gratis) ntfy-account gelden de limieten per account i.p.v. per IP-adres
+        base["Authorization"] = f"Bearer {cfg['ntfy_token']}"
+    body = f"{describe(x)}\n{x['url']}".encode("utf-8")
+    title = f"🏠 Nieuwe woning in {x['city']}: €{x['price']:.0f}"
+    first = _post(cfg, {**base, "Title": title.encode("utf-8")}, body)
+    # Tweede melding: ntfy bezorgt hem zelf 2 minuten later
+    second = _post(cfg, {**base, "Title": f"⏰ Herinnering – {title}".encode("utf-8"),
+                         "In": "2m"}, body)
+    return first or second
 
 
 def now() -> str:
