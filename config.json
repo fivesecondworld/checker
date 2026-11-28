@@ -1,9 +1,7 @@
 {
   "city": "Eindhoven",
-  "max_price": 1400,
+  "max_price": 1300,
   "include_service_costs": false,
-  "stages": [
-    "available"
-  ],
+  "stages": [],
   "types": []
 }
